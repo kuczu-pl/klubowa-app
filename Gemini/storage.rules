@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+// STORAGE SECURITY RULES — KGiGW Ceradz Dolny
+// ═══════════════════════════════════════════════════════════════════
+// Wdrożenie: firebase deploy --only storage
+// ═══════════════════════════════════════════════════════════════════
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── GALERIA ZDJĘĆ ─────────────────────────────────────────────
+    // Tylko zalogowani mogą wgrywać i czytać zdjęcia.
+    // Rozmiar max 10 MB, tylko obrazy.
+    match /gallery/{filename} {
+      allow read: if request.auth != null;
+      allow create: if
+        request.auth != null &&
+        request.resource.size <= 10 * 1024 * 1024 &&           // max 10 MB
+        request.resource.contentType.matches('image/.*');       // tylko obrazy
+      allow delete: if request.auth != null;  // właściciel weryfikowany w Firestore
+      allow update: if false;                 // zdjęcia się nie edytuje, tylko dodaje/usuwa
+    }
+
+    // ── LOGO ORGANIZACJI ──────────────────────────────────────────
+    match /org/{filename} {
+      allow read: if true;        // logo jest publiczne
+      allow write: if
+        request.auth != null &&
+        request.resource.size <= 2 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    // ── MAILING (GRAFIKI W TREŚCI) ────────────────────────────────
+    match /mail_images/{filename} {
+      // ZDJĘCIA W MAILU MUSZĄ BYĆ PUBLICZNE, INACZEJ GMAIL/OUTLOOK ICH NIE POKAŻE
+      allow read: if true; 
+      allow write: if 
+        request.auth != null &&
+        request.resource.size <= 5 * 1024 * 1024 &&            // max 5 MB na obrazek
+        request.resource.contentType.matches('image/.*');
+    }
+
+    // ── MAILING (ZAŁĄCZNIKI) ──────────────────────────────────────
+    match /mail_attachments/{filename} {
+      // PLIKI MUSZĄ BYĆ PUBLICZNE, ABY ODBIORCA MÓGŁ JE POBRAĆ Z MAILA
+      allow read: if true; 
+      allow write: if request.auth != null;
+    }
+
+    // Domyślnie — blokuj wszystko inne
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,160 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+// FIRESTORE SECURITY RULES — Piastowskie Granie (Sport Edition)
+// Role: member | zarzad | skarbnik | admin
+// ═══════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── HELPER FUNCTIONS ──────────────────────────────────────────
+
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isLoggedIn() && myRole() == "admin";
+    }
+
+    function isZarzad() {
+      return isLoggedIn() && myRole() in ["admin", "zarzad"];
+    }
+
+    function isSkarbnik() {
+      return isLoggedIn() && myRole() in ["admin", "skarbnik", "zarzad"];
+    }
+
+    function isMember() {
+      return isLoggedIn();
+    }
+
+    function isOwner(resource) {
+      return isLoggedIn() && request.auth.uid == resource.data.authorId;
+    }
+
+    // ── USERS ─────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isMember();
+      // Rejestracja: pozwól stworzyć dokument jeśli UID się zgadza
+      allow create: if isLoggedIn() && request.auth.uid == userId;
+      
+      allow update: if 
+        // 1. Sam użytkownik (może zmieniać imię, telefon, motyw)
+        (request.auth.uid == userId && 
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role", "joined", "id", "rating"])) ||
+        // 2. Admin/Zarząd (może zmieniać wszystko, w tym RATING i ROLE)
+        isZarzad();
+        
+      allow delete: if isAdmin() && request.auth.uid != userId;
+    }
+
+    // ── SETTINGS ──────────────────────────────────────────────────
+    match /settings/{docId} {
+      allow read: if true; 
+      allow write: if isZarzad(); // Zarząd może konfigurować kategorie i logo
+    }
+
+    // ── NEWS ──────────────────────────────────────────────────────
+    match /news/{docId} {
+      allow read: if true;
+      allow create: if isZarzad();
+      allow update: if isOwner(resource) || isZarzad();
+      allow delete: if isOwner(resource) || isZarzad();
+    }
+
+    // ── IDEAS ─────────────────────────────────────────────────────
+    match /ideas/{docId} {
+      allow read: if isMember();
+      allow create: if isMember();
+      allow update: if 
+        (isMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["voters", "votes"])) ||
+        isZarzad() || isOwner(resource);
+      allow delete: if isOwner(resource) || isZarzad();
+    }
+
+    // ── RECIPES (Zasoby / Taktyki ogólne) ──────────────────────────
+    match /recipes/{docId} {
+      allow read: if isMember();
+      allow create: if isMember();
+      allow update: if isMember() || isZarzad();
+      allow delete: if isOwner(resource) || isZarzad();
+    }
+
+    // ── EVENTS (Mecze, Treningi, Składy, Taktyka) ──────────────────
+    match /events/{docId} {
+      allow read: if isMember();
+      allow create: if isZarzad();
+      allow update: if 
+        // Member może zmieniać listę obecności, rezerwę, prośby o wypisanie oraz deklaracje sprzętu
+        (isMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["attendees", "pendingCancellations", "reserve", "equipment"])) ||
+        // Zarząd i Skarbnik mogą zmieniać wszystko (taktykę, rozliczenia, statusy opłat)
+        isSkarbnik();
+      allow delete: if isZarzad();
+    }
+
+    // ── DUES & FINANCES ───────────────────────────────────────────
+    match /dues/{docId} {
+      allow read: if (isMember() && resource.data.userId == request.auth.uid) || isSkarbnik();
+      allow write: if isSkarbnik();
+    }
+
+    match /finances/{docId} {
+      allow read, write: if isSkarbnik();
+    }
+
+    // ── GALLERY & ALBUMS ──────────────────────────────────────────
+    match /gallery/{docId} {
+      allow read: if true;
+      allow create: if isMember();
+      allow update, delete: if isOwner(resource) || isZarzad();
+    }
+
+    match /albums/{docId} {
+      allow read: if true;
+      allow write: if isZarzad();
+    }
+
+    // ── MESSAGES ──────────────────────────────────────────────────
+    match /messages/{docId} {
+      allow read: if isLoggedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if isLoggedIn() && request.resource.data.from == request.auth.uid;
+      allow update: if isLoggedIn() && resource.data.to == request.auth.uid;
+      allow delete: if isLoggedIn() && resource.data.from == request.auth.uid;
+    }
+
+    // ── OTHERS ────────────────────────────────────────────────────
+    match /comments/{docId} {
+      allow read: if isMember();
+      allow create: if isMember();
+      allow delete: if isOwner(resource) || isZarzad();
+    }
+
+    match /notifications/{docId} {
+      allow read: if isLoggedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isLoggedIn();
+      allow update, delete: if isLoggedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /polls/{docId} {
+      allow read: if isMember();
+      allow write: if isZarzad();
+      allow update: if isMember(); // Głosowanie
+    }
+
+    match /documents/{docId} {
+      allow read: if isMember();
+      allow write: if isZarzad();
+    }
+
+    match /mail_queue/{docId} {
+      allow read: if isZarzad();
+      allow create: if isLoggedIn();
+    }
+  }
+}
